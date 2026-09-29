@@ -1,0 +1,204 @@
+---
+title: "Batch_correction_ComBat"
+author: "MJBS"
+date: "2025-05-23"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, libraries}
+#load neccessary libraries
+#install.packages("UpSetR")
+library("sva") #Note this exercise requires sva (>= v3.36.0) which is only available for R (>= v4.x)
+library("ggplot2")
+library("gridExtra")
+library("edgeR")
+library("UpSetR")
+
+library(tidyverse)
+# library(ggVennDiagram)
+library(biomaRt)
+library(edgeR)
+library(readxl)
+library(data.table)
+library(ggplot2)
+library(ggpubr)
+library(grid)
+library(gplots)
+library(FNN)
+library(ggrepel)
+library(ggfortify)
+```
+
+```{r, load_counts_uncorrected_data}
+uncorrected_data <- read.csv("/n/core/Bioinformatics/secondary/Bazzini/mb2365/MOLNG-4284.GRCh38.Ens_110/secundo/star_count.csv", header = TRUE)
+```
+
+```{r, remove-nongene}
+uncorrected_data <- uncorrected_data %>% filter(!str_detect(gene_id, "^N_"))
+```
+
+The source of this code came from:
+https://rnabio.org/module-03-expression/0003/06/02/Batch-Correction/
+
+Simplifying column names to have only factor_r#
+```{r, renaming_samples}
+# Extract "factor" and "rX" and reformat as "factor_rX"
+colnames(uncorrected_data) <- sub("s_([^_]+)_shrna_pos_dox_(r[0-9]+)", "\\1_\\2", colnames(uncorrected_data))
+```
+
+```{r, storing_sample_names}
+sample_names <- names(uncorrected_data)[2:length(names(uncorrected_data))]
+```
+
+```{r, review_data_structure}
+#review data structure
+head(uncorrected_data)
+dim(uncorrected_data)
+```
+> dim(uncorrected_data)
+[1] 62754   240
+
+```{r, define_conditions}
+#define conditions, library methods, and replicates
+#conditions = c("UHR", "UHR", "UHR", "UHR", "HBR", "HBR", "HBR", "HBR", "UHR", "UHR", "UHR", "UHR", "HBR", "HBR", "HBR", "HBR")
+#all my samples are dox treatment, no differences in conditions
+#library_methods = c("Ribo", "Ribo", "Ribo", "Ribo", "Ribo", "Ribo", "Ribo", "Ribo", "Poly", "Poly", "Poly", "Poly", "Poly", "Poly", "Poly", "Poly")
+#all my samples have the same library construction method, no need to specify
+replicates <- sub("([^_]+)_(r[0-9]+)", "\\2", colnames(uncorrected_data))
+replicates <- replicates[2:240]
+```
+
+# calculate principal components for the uncorrected data
+```{r, PCA_uncorrected}
+pca_uncorrected_obj = prcomp(uncorrected_data[,sample_names])
+```
+
+```{r,pcavalues_uncorrected}
+#pull PCA values out of the PCA object
+pca_uncorrected = as.data.frame(pca_uncorrected_obj[2]$rotation)
+
+#assign labels to the data frame
+#pca_uncorrected[,"condition"] = conditions
+#pca_uncorrected[,"library_method"] = library_methods
+pca_uncorrected[,"replicate"] = replicates
+```
+
+```{r, plot_PCA_uncorrected}
+#plot the PCA
+#create a classic 2-dimension PCA plot (first two principal components) with conditions and library methods indicated
+#cols <- c("UHR" = "#481567FF", "HBR" = "#1F968BFF")
+p1 = ggplot(data = pca_uncorrected, aes(x = PC1, y = PC2, color = replicate))
+p1 = p1 + geom_point(size = 3)
+p1 = p1 + stat_ellipse(type = "norm", linetype = 2)
+p1 = p1 + labs(title = "PCA, RNA-seq counts for 239 DOX-treated samples (uncorrected data)", color = "replicate")
+#p1 = p1 + scale_colour_manual(values = cols)
+p1
+```
+
+The ComBat-Seq package is made available as part of the SVA package for Surrogate Variable Analysis. This package is a collection of methods for removing batch effects and other unwanted variation in large datasets. It includes the ComBat method that has been widely used for batch correction of gene expression datasets, especially those generated on microarray platforms. ComBat-Seq is a modification of the ComBat approach. ComBat-Seq has been tailored to the count based data of bulk RNA-seq datasets. Particular advantages of the ComBat-Seq approach are that it: (1) uses a negative binomial regression model (the negative binomial distribution is thought to model the characteristics of bulk RNA-seq count data), and (2) allows the output of corrected data that retain the count nature of the data and can be safely fed into many existing methods for DE analysis (such as EdgeR and DESeq2).
+
+ComBat-Seq has a relatively short list of arguments, and for several of these we will use the default setting. Very basic documentation of these arguments can be found
+https://rdrr.io/bioc/sva/man/ComBat_seq.html
+https://github.com/zhangyuqing/ComBat-seq
+
+# ComBat-seq arguments
+
+counts. This is your matrix of gene expression read counts (raw counts). Each row is a gene, each column is a sample, and each cell has an integer count for the number of RNA-seq counts observed for that gene/sample combination. In R we want this data to be passed into ComBat-Seq in matrix format (use as.matrix() if neccessary).
+
+batch. This is a vector describing the batches you are concerned about. For example, if you have eight samples that you created RNA-seq data for, but for the first four you used library kit (A) and for the last four samples you used library kit (B). In this situation you would define your batch vector as: c(1,1,1,1,2,2,2,2).
+
+group = NULL. This is a vector describing your biological condition of interest. For example, if your experiment involved pairs of drug treated and untreated cells, and you did 4 biological replicates. You would define your group vector as: c(1,2,1,2,1,2,1,2).
+
+covar_mod = NULL. If you have multiple biological conditions of interest, you can define these with covar_mod (covariates) instead of group. For example, lets assume we have the same experiment as described above, except that we did four replicates (treated vs untreated pairs), but we alternated use of male and female cells for each of the replicates. You then would define a covariate matrix to supply to covar_mod as follows:
+
+```{r, combat_seq_args_example}
+ #treatment_group = c(1,2,1,2,1,2,1,2)
+  #sex_group = c(1,1,2,2,1,1,2,2)
+  #covariate_matrix = cbind(treatment_group, sex_group)
+```
+
+full_mod = TRUE. If TRUE include the condition of interest in model. Generally we believe this should be set to the default TRUE. We have yet to find a cohesive explanation for a situation where one would want this to be FALSE.
+
+shrink = FALSE. Whether to apply shrinkage on parameter estimation.
+
+shrink.disp = FALSE. Whether to apply shrinkage on dispersion.
+
+gene.subset.n = NULL. Number of genes to use in empirical Bayes estimation, only useful when shrink = TRUE.
+
+Briefly, shrinkage refers to a set of methods that attempt to correct for gene-specific variability in the counts observed in RNA-seq datasets. More specifically, it relates to the dispersion parameter of the negative binomial distribution used to model RNA-seq count data that can suffer from overdispersion. The dispersion parameter describes how much variance deviates from the mean. In simple terms, shrinkage methods are an attempt to correct for problematic dispersion. A more detailed discussion of these statistical concepts can be found in the DESeq2 paper. However, for our purposes here, the bottom line is that the ComBat-Seq authors state that “We have shown that applying empirical Bayes shrinkage is not necessary for ComBat-seq because the approach is already sufficiently robust due to the distributional assumption.” So we will leave these arguments at their default FALSE settings.
+
+# use ComBat-Seq to perform batch correction as follows:
+```{r, ComBat_Seq}
+#perform the batch correction
+
+#first we need to transform the format of our groups and batches from names (e.g. "UHR", "HBR", etc.) to numbers (e.g. 1, 2, etc.)
+#in the command below "sapply" is used to apply the "switch" command to each element and convert names to numbers as we define
+# Convert to numeric batch
+# Extract the *first digit* after "r" from the sample name
+replicate_digits <- sub(".*_r([0-9])[0-9]*$", "\\1", sample_names)
+
+# Confirm that it worked
+table(replicate_digits)
+
+# Convert to batch factor (if needed for ComBat_seq)
+batches <- factor(replicate_digits)
+#uncorrected_data_geneid <- uncorrected_data[,1]
+#uncorrected_data_wogeneID <-uncorrected_data[ ,2:240]
+#now run ComBat_seq
+corrected_data = ComBat_seq(counts = as.matrix(uncorrected_data[,sample_names]), batch = batches, group = NULL)
+```
+
+```{r, comparison_dims}
+#compare dimensions of corrected and uncorrected data sets
+dim(uncorrected_data)
+dim(corrected_data)
+
+```
+
+> dim(uncorrected_data)
+[1] 62754   240
+> dim(corrected_data)
+[1] 62754   239
+
+```{r, visual_comparison}
+#visually compare values of corrected and uncorrected data sets
+head(uncorrected_data)
+head(corrected_data)
+```
+
+# Perform PCA analysis on the batch corrected data and contrast with the uncorrected data
+As performed above, use PCA to examine whether batch correction changes the grouping of samples by the expression patterns. Does the corrected data cluster according to biological condition (UHR vs HBR) better now regardless of library preparation type (Ribo vs PolyA)?
+
+```{r, PCA_corrected}
+#calculate principal components for the corrected data
+pca_corrected_obj = prcomp(corrected_data[, sample_names])
+
+#pull PCA values out of the PCA object
+pca_corrected = as.data.frame(pca_corrected_obj[2]$rotation)
+
+#assign labels to the data frame
+#pca_corrected[,"condition"] = conditions
+#pca_corrected[,"library_method"] = library_methods
+pca_corrected[,"replicate"] = replicates
+
+#as above, create a PCA plot for comparison to the uncorrected data
+#cols <- c("UHR" = "#481567FF", "HBR" = "#1F968BFF")
+p2 = ggplot(data = pca_corrected, aes(x = PC1, y = PC2, color = replicate))
+p2 = p2 + geom_point(size = 3)
+p2 = p2 + stat_ellipse(type = "norm", linetype = 2)
+p2 = p2 + labs(title = "PCA, RNA-seq counts for 239 samples (batch corrected data)", color = "replicate")
+#p2 = p2 + scale_colour_manual(values = cols)
+
+pdf(file = "/n/projects/mb2365/Automation/mRNA-seq_60shRNAs_induced/NGS_request/batch_correction/batch_correction_output/Uncorrected-vs-BatchCorrected-PCA.pdf")
+grid.arrange(p1, p2, nrow = 2)
+dev.off()
+
+write.csv(corrected_data, file = "/n/projects/mb2365/Automation/mRNA-seq_60shRNAs_induced/NGS_request/batch_correction/batch_correction_output/ComBat_batch_corrected_data_star_counts.csv")
+```
+
