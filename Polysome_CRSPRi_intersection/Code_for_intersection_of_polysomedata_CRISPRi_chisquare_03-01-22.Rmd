@@ -1,0 +1,393 @@
+---
+title: "CRISPRi_polysome"
+author: "Majo Blanco"
+date: "2022-11-22"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Methodology description
+
+data from https://elifesciences.org/articles/58828#s3
+EDF1 paper, extended table 1
+
+## Intersection of CRISPRi screen hits with polysome profiling data. 
+Positive and negative regulators identified in the CRISPRi mCherry-reporter screen (hereafter "candidates"; factors whose knockdown produced a significant change in mCherry fluorescence intensity, as defined by the volcano-plot threshold) were intersected with a published polysome profiling dataset by HGNC gene symbol using an inner join. Genes in the screen that did not pass the volcano-plot threshold were designated non-candidates and used to construct control sets. Four independent control groups of ~500 human non-candidate proteins were drawn from the screen library by assigning each protein a random number, ranking on that value, and taking the first, second, and third consecutive blocks of 500 as well as the bottom 500; each control set was intersected with the polysome profiling data in the same manner. Where a gene symbol was represented by more than one row (principally ribosomal proteins carrying multiple annotations), records were collapsed to a single entry per symbol, preferentially retaining the row annotated "other" in the Ribosome_Detailed field, and gene symbols were then used as unique row identifiers.
+
+## Fractional distribution and classification
+For each protein, signal was averaged across replicate fractions and summarized into three categories corresponding to initiation, light polysome (elongation), and heavy polysome fractions. Proteins were assigned to the category in which they showed the greatest representation. Enrichment of candidates relative to each random control set across the four outcome categories (not detected in the polysome dataset, initiation, light polysome, heavy polysome) was assessed by chi-square test.
+Differences in the distribution of positive candidates, negative candidates, and randomly selected non-candidate proteins across polysome fractions were assessed by chi-square test of independence on the full contingency table, followed by pairwise chi-square tests between each candidate class and its matched control set, with Benjamini–Hochberg correction across the four independent control sets. Standardized residuals were used to identify the categories contributing most to each association. Analyses were performed both including and excluding proteins not detected in the polysome dataset.
+
+## Visualization and candidate refinement.
+Signal across the three fraction categories was converted to row-wise z-scores ("row-normalized relative enrichment" each protein centered and scaled across its own three values), and heatmaps were generated with heatmap.2 (gplots) using row scaling, a white-to-red color ramp, and no row or column clustering. A refined candidate list was defined as those factors with z > 1 in the elongation and/or heavy polysome categories, and this list was carried forward in the pipeline. All analysis was performed in R using dplyr, gplots, and pheatmap.
+
+# Intersaction of tables
+
+```{r setup}
+library(gplots)
+library(dplyr)
+library(pheatmap)
+#*I am calling non candidates those proteins in the screening that did not passed the threshold established in the volcano plot, based on the significance of phenotype change in mCherry fluorescence intensity after CRISPR of factors.
+data_polysome <- read.table("/n/projects/mb2365/R/others/polysome/original_data/data1_v2_ranked.csv",header = TRUE, sep = ",")
+candidates_pos <-read.table("/n/projects/mb2365/R/others/polysome/original_data/DE_list_positive_factors.csv",header = FALSE, sep = ",")
+#noncandidates <-read.table("/Volumes/bazzinilab/Members/Majo/Candidates_CRISPRi_screening_optimality/non_candidates_CRISPRi071123.csv",header = FALSE, sep = ",")
+#were column V2 is 1 if candidates are positive factors and 2 if they are negative factors
+
+#groups for chi square test comparison of distribution of polysome proteins in initation and elongation
+#random group of 500 human proteins noncandidates from screening
+#taken from random number in extra column in excel
+#fourdifferent control groups can help see the noise 
+top500_random_human_noncandidates <-read.table("/n/projects/mb2365/R/others/polysome/original_data/CRISPR_I_DE_all_HUMAN_only_500_RANDOM_07-20-23.csv",header = TRUE, sep = ",")
+
+#random second group of 500 human proteins noncandidates from screening
+top500_second_random_human_noncandidates <-read.table("/n/projects/mb2365/R/others/polysome/original_data/CRISPR_I_DE_all_HUMAN_only_second-500_RANDOM_07-20-23.csv",header = TRUE, sep = ",")
+
+#random third group of 500 human proteins non candidates from screening
+top500_third_random_human_noncandidates <-read.table("/n/projects/mb2365/R/others/polysome/original_data/CRISPR_I_DE_all_HUMAN_only_third-500_RANDOM_07-20-23.csv",header = TRUE, sep = ",")
+
+#random bottom group of 500 human proteins non candidates from screening
+top500_bottom_random_human_noncandidates <-read.table("/n/projects/mb2365/R/others/polysome/original_data/CRISPR_I_DE_all_HUMAN_only_bottom-500_RANDOM_07-20-23.csv",header = TRUE, sep = ",")
+
+#rename columns for easier intersection
+colnames(candidates_pos)[1] <- "Gene.Symbol"
+#colnames(noncandidates)[1] <- "Gene.Symbol"
+colnames(top500_random_human_noncandidates)[1] <- "Gene.Symbol"
+colnames(top500_second_random_human_noncandidates)[1] <- "Gene.Symbol"
+colnames(top500_third_random_human_noncandidates)[1] <- "Gene.Symbol"
+colnames(top500_bottom_random_human_noncandidates)[1] <- "Gene.Symbol"
+
+#intersection between data_polysome and candidates
+new_data_frame <- merge(data_polysome,candidates_pos, by.x = "Gene.Symbol", by.y = "Gene.Symbol")
+#new_non_data_frame <- merge(data_polysome, noncandidates, by.x = "Gene.Symbol", by.y = "Gene.Symbol")
+new_data_frame <- unique(new_data_frame)
+#new_non_data_frame <- unique(new_non_data_frame)
+#intento <- candidates[candidates$V1 %in% data_polysome$Gene.Symbol, ]
+
+#intersection with top 500 random human proteins non candidates for chisquare
+intersection_polysome_500random_noncandidates <- merge(data_polysome,top500_random_human_noncandidates, by.x = "Gene.Symbol", by.y = "Gene.Symbol")
+intersection_polysome_500random_noncandidates <- unique(intersection_polysome_500random_noncandidates)
+
+#intersection with secdon 500 random human protein non candidates goup for chisquare
+intersection_polysome_second_500random_noncandidates <- merge(data_polysome,top500_second_random_human_noncandidates, by.x = "Gene.Symbol", by.y = "Gene.Symbol")
+intersection_polysome_second_500random_noncandidates <- unique(intersection_polysome_second_500random_noncandidates)
+
+#intersection with third 500 random human protein non candidates group for chi square
+intersection_polysome_third_500random_noncandidates <- merge(data_polysome,top500_third_random_human_noncandidates, by.x = "Gene.Symbol", by.y = "Gene.Symbol")
+intersection_polysome_third_500random_noncandidates <- unique(intersection_polysome_third_500random_noncandidates)
+
+#intersection with bottom 500 random human proteins non candidates grouop for chisquare comparison
+intersection_polysome_bottom_500random_noncandidates <- merge(data_polysome,top500_bottom_random_human_noncandidates, by.x = "Gene.Symbol", by.y = "Gene.Symbol")
+intersection_polysome_bottom_500random_noncandidates <- unique(intersection_polysome_bottom_500random_noncandidates)
+
+
+#saving them as csv in members folder
+write.csv(new_data_frame, "/n/projects/mb2365/R/others/polysome/output/intersection_polisome_optimality_annotated.csv", row.names=TRUE)
+#write.csv(new_non_data_frame, "/Volumes/bazzinilab/Members/Majo/R/others/polysome/original_data/polysome_and_CRIPSRi_optimality/NONintersection_polisome_optimality_annotated.csv", row.names=TRUE)
+write.csv(intersection_polysome_500random_noncandidates, "/n/projects/mb2365/R/others/polysome/output/intersection_polisome_500random_noncandidates.csv", row.names=TRUE)
+write.csv(intersection_polysome_second_500random_noncandidates, "/n/projects/mb2365/R/others/polysome/output/intersection_polisome_second500random_noncandidates.csv", row.names=TRUE)
+write.csv(intersection_polysome_third_500random_noncandidates, "/n/projects/mb2365/R/others/polysome/output/intersection_polisome_third_500random_noncandidates.csv", row.names=TRUE)
+write.csv(intersection_polysome_bottom_500random_noncandidates, "/n/projects/mb2365/R/others/polysome/output/intersection_polisome_bottom_500random_noncandidates.csv", row.names=TRUE)
+
+
+#I did some manual editing in excel that is why I am importing the table again
+#what I do in excel is to take the avertage of the number in initation fractions,and in heavy and light fractions
+#then I ranked those proteins that have more instances in initaition, or in elongation or in polysome heavy
+#I added another column for that classification, and is what helps me to create groups in the heatmap
+
+#data_polysome$type <- substr(data_polysome$Gene.Symbol,1,3)
+ new_data_frame <-as.data.frame (read.csv("/n/projects/mb2365/R/others/polysome/updated_outputs/intersection_polisome_optimality_annotated.csv",row.names = NULL))
+positive_candidates <- read.csv("/n/projects/mb2365/R/others/polysome/updated_outputs/intersection_polisome_positive_optimality_annotated.csv",row.names = NULL)
+negative_candidates <- read.csv("/n/projects/mb2365/R/others/polysome/updated_outputs/intersection_polisome_negative_optimality_annotated.csv",row.names = NULL)
+ddx24_candidate <-suppressWarnings(read.csv("/n/projects/mb2365/R/others/polysome/updated_outputs/DDX24_and_control_values_polysome.csv",row.names = NULL))
+#rownames(new_data_frame)<-new_data_frame$Gene.Symbol
+#there are non-unique values when setting 'row.names': ‘EDF1’, ‘EIF5B’, ‘RPL10A’, ‘RPL11’, ‘RPL12’, ‘RPL13’, ‘RPL14’, ‘RPL15’, ‘RPL17’, ‘RPL18’, ‘RPL19’, ‘RPL21’, ‘RPL23’, ‘RPL24’, ‘RPL26’, ‘RPL27A’, ‘RPL28’, ‘RPL30’, ‘RPL31’, ‘RPL34’, ‘RPL36A’, ‘RPL37A’, ‘RPL39’, ‘RPL4’, ‘RPL5’, ‘RPL6’, ‘RPL7A’, ‘RPL8’, ‘RPS11’, ‘RPS13’, ‘RPS14’, ‘RPS18’, ‘RPS20’, ‘RPS21’, ‘RPS24’, ‘RPS27’, ‘RPS27A’, ‘RPS28’, ‘RPS29’, ‘RPS4X’, ‘RPS5’, ‘RPS7’, ‘RPSA’   -> I am going to keep the ones that haave "Ribosome_Detailed" as "other" and then rename the rownames with the gene symbol that now should be unique
+# within each gene: if any row is "other", keep only those; otherwise keep the gene's rows unchanged
+#result <- new_data_frame %>%
+  #group_by(Gene.Symbol) %>%
+  #filter(!any(Ribosome_Detailed == "other") | Ribosome_Detailed == "other") %>%
+  #ungroup()
+#The above still leaves duplicates if a gene has two "other" rows. To collapse to one row per symbol, preferring "other":
+result <- new_data_frame %>%
+  arrange(Gene.Symbol, Ribosome_Detailed != "other") %>%   # "other" rows sort first
+  distinct(Gene.Symbol, .keep_all = TRUE)
+rownames(result)<-result$Gene.Symbol
+#res <-data_frame(setdiff(candidates_pos$V1, positive_candidates_poly_optimality$Gene.Symbol))
+#total_positive_candidates_from_CRISPR_and_Poly <-rbind(res, positive_candidates_poly_optimality)
+
+# choose the data you want for the heatmap, by column names
+#new_data_frame_col1<-new_data_frame[c("Fr01.UT_01_sum_sn","Fr01.UT_02_sum_sn","Fr01.UT_03_sum_sn","Fr02.UT_01_sum_sn","Fr02.UT_02_sum_sn","Fr02.UT_03_sum_sn","Fr03.UT_01_sum_sn","Fr03.UT_02_sum_sn","Fr03.UT_03_sum_sn","Fr04.UT_01_sum_sn","Fr04.UT_02_sum_sn","Fr04.UT_03_sum_sn","Fr05.UT_01_sum_sn","Fr05.UT_02_sum_sn","Fr05.UT_03_sum_sn","Fr06.UT_01_sum_sn","Fr06.UT_02_sum_sn","Fr06.UT_03_sum_sn","Fr07.UT_01_sum_sn","Fr07.UT_02_sum_sn","Fr07.UT_03_sum_sn","Fr08.UT_01_sum_sn","Fr08.UT_02_sum_sn","Fr08.UT_03_sum_sn","Fr09.UT_01_sum_sn","Fr09.UT_02_sum_sn","Fr09.UT_03_sum_sn","Fr10.UT_01_sum_sn","Fr10.UT_02_sum_sn","Fr10.UT_03_sum_sn")]
+new_data_frame_col1<-result[c("initation", "elongation","polysome")]
+Ma_Nonmatrix<-data.matrix(new_data_frame_col1)
+
+positive_candidates_col1<-positive_candidates[c("initation", "elongation","polysome")]
+Mapos_Nonmatrix<-data.matrix(positive_candidates_col1)
+
+negative_candidates_col1<-negative_candidates[c("initation", "elongation","polysome")]
+Mapneg_Nonmatrix<-data.matrix(negative_candidates_col1)
+
+ddx24_candidate_col1<-ddx24_candidate[c("initation", "elongation","polysome")]
+Mapddx24_Nonmatrix<-data.matrix(ddx24_candidate_col1)
+```
+
+Note that for the control groups created for the comparison with the Chi Square, the numbers of the intersection ended up as following:
+*I am calling non candidates those proteins in the screening that did not passed the threshold established in the volcano plot, based on the significance of phenotype change in mCherry fluorescence intensity after CRISPR of factors.
+
+I selected 501 human proteins from the file that Q created with all the human proteins and controls used in the     screening. I did this by adding a column for the generation of random numbers and ranked them based on this random number. 
+
+  From this 501 top random human proteins that are non candidates, 132 are found in the polysome profiling data set. Therefore 369 proteins are not found in the polysome profiling. 
+  Out of the 132 proteins in the polysome profiling:
+    54 are found in initiation
+    42 are found in the light polysome fraction
+    36 are found in the heavy polysome fraction
+  
+I selected 500 human proteins that are called as "second" because they are the second 500 proteins coming from the ranking based on random numbers
+  From this 500 second random human proteins that are not candidates, 116 were found in the polysome profiling data set. Therefore 384 proteins are not found in the polysome profiling.
+  Out of the 116 proteins found in the polysome profiling:
+    48 are found in initiation
+    40 are found in the light polysome fraction
+    28 are found in the heavy polysome fraction
+  
+I selected 500 human proteins that are called as "third" because they are the third 500 proteins coming from the ranking based on the random number column added in excel
+  From this 500 third random human proteins that are not candidates, 102 were found in the polysome profiling data set. Therefore, 398 proteis are not found in the polysome profiling. 
+  Out of the 102 proteins that are found in the polysome profiling:
+    46 are found in the initation
+    29 are found in the light polysome fraction
+    27 are found in the heavy polysome fraction
+  
+I selected the bottom 500 human proteins coming from the excel ranking. From this 500, 110 were found in the polysome profiling data set. Therefore 390 are not found.
+  Out of the 110 proteins that are found in the polysome profiling:
+    40 are found in the initation
+    39 are found in the light polysome fraction
+    31 are found in the heavy polysome fraction
+
+# Heatmap
+
+```{r heatmap, include=FALSE}
+
+# with no scale, you can also scale by row or column
+#scale = c("none","row", "column") 
+
+Non_htmp<-heatmap.2(Ma_Nonmatrix, Rowv = FALSE, dendrogram ="none", Colv= NA, col=colorRampPalette(c ("white","red")), scale="row", labRow= new_data_frame$Gene.Symbol, trace="none", density.info=c("none"), cexCol=0.8,cexRow = 0.3, main = "polysome profiling density")
+
+#pretty heat map: pheatmap()
+#pheatmap(new_data_frame_col1, scale="row", cutree_rows = 4)
+
+Non_htmp<-heatmap.2(Mapos_Nonmatrix, Rowv = FALSE, dendrogram ="none", Colv= NA, col=colorRampPalette(c ("white","red")), scale="row", labRow= positive_candidates$Gene.Symbol, trace="none", density.info=c("none"), cexCol=0.8,cexRow = 0.5, main = "polysome profiling density")
+
+Non_htmp<-heatmap.2(Mapneg_Nonmatrix, Rowv = FALSE, dendrogram ="none", Colv= NA, col=colorRampPalette(c ("white","red")), scale="row", labRow= negative_candidates$Gene.Symbol, trace="none", density.info=c("none"), cexCol=0.8,cexRow = 0.2, main = "polysome profiling density")
+
+Non_htmp<-heatmap.2(Mapddx24_Nonmatrix, Rowv = FALSE, dendrogram ="none", Colv= NA, col=colorRampPalette(c ("white","red")), scale="row", labRow= ddx24_candidate$Gene.Symbol, trace="none", density.info=c("none"), cexCol=0.8,cexRow = 0.7, main = "polysome profiling density")
+
+```
+
+
+# Chi-square
+
+```{r, statistic}
+#Chi-square comparison between positive candidates (passing threshold from Q screening) vs top500 random human proteins that are not hits in the same screening. Comparing the distribution of proteins between these two groups in the initation, light polysome or heavy polysome fractions of the polysome profiling dataset
+
+## ---- Chi-square: candidate classes vs. random non-candidate controls ----
+
+# Each control set is a separate 3x4 contingency table.
+# Rows: Positive_candidates, Negative_candidates, random control
+# Cols: Not_found, Initiation, light, heavy
+make_tab <- function(random_row) {
+  m <- rbind(
+    Positive_candidates = c(109, 11,  21,  24),
+    Negative_candidates = c( 85, 74, 131, 127),
+    Random_control      = random_row
+  )
+  colnames(m) <- c("Not_found", "Initiation", "light", "heavy")
+  m
+}
+
+tables <- list(
+  top500    = make_tab(c(369, 54, 42, 36)),
+  second500 = make_tab(c(384, 48, 40, 28)),
+  third500  = make_tab(c(398, 46, 29, 27)),
+  bottom500 = make_tab(c(390, 40, 39, 31))
+)
+
+## 1. Omnibus test: does fraction distribution differ among the three groups?
+omnibus <- lapply(tables, chisq.test)
+sapply(omnibus, function(x) x$p.value)
+
+## 2. Check the chi-square assumption (all expected counts >= 5)
+lapply(omnibus, function(x) round(x$expected, 1))
+
+## 3. Pairwise: each candidate class against its control, with FDR correction
+pairwise <- do.call(rbind, lapply(names(tables), function(nm) {
+  tab <- tables[[nm]]
+  data.frame(
+    control    = nm,
+    comparison = c("Positive vs Random", "Negative vs Random",
+                   "Positive vs Negative"),
+    p          = c(
+      chisq.test(tab[c("Positive_candidates", "Random_control"), ])$p.value,
+      chisq.test(tab[c("Negative_candidates", "Random_control"), ])$p.value,
+      chisq.test(tab[c("Positive_candidates", "Negative_candidates"), ])$p.value
+    )
+  )
+}))
+pairwise$p_adj <- p.adjust(pairwise$p, method = "BH")
+pairwise
+
+## 4. Post-hoc: which cells drive the signal?
+## Standardized residuals; |r| > 2 is conventionally "contributes notably",
+## |r| > 3 is strong. Sign gives direction (+ = over-represented).
+lapply(omnibus, function(x) round(x$stdres, 2))
+```
+
+## Results
+	
+control
+comparison
+p
+p_adj
+1
+top500
+Positive vs Random
+4.454420e-03
+4.454420e-03
+2
+top500
+Negative vs Random
+1.161397e-58
+3.484190e-58
+3
+top500
+Positive vs Negative
+5.832908e-24
+8.749362e-24
+4
+second500
+Positive vs Random
+2.934627e-04
+3.521552e-04
+5
+second500
+Negative vs Random
+2.478633e-65
+9.914533e-65
+6
+second500
+Positive vs Negative
+5.832908e-24
+8.749362e-24
+7
+third500
+Positive vs Random
+1.298543e-05
+1.731391e-05
+8
+third500
+Negative vs Random
+3.292581e-72
+3.951097e-71
+9
+third500
+Positive vs Negative
+5.832908e-24
+8.749362e-24
+10
+bottom500
+Positive vs Random
+9.257095e-04
+1.009865e-03
+11
+bottom500
+Negative vs Random
+1.056584e-66
+6.339507e-66
+12
+bottom500
+Positive vs Negative
+5.832908e-24
+8.749362e-24
+
+$p.value from the omnibus answers "do these three groups distribute differently across fractions?" — that's the claim your Results section is actually making.
+
+$stdres is what lets you write sentences like "positive candidates are depleted from the initiation fraction (standardized residual = −4.1) and enriched among proteins not detected in the polysome dataset." Without it, a significant omnibus test tells you something differs but not what.
+
+One design decision you should make explicitly
+
+Including Not_found mixes two questions: (a) are candidates detected in polysome profiling at all, and (b) given detection, where do they sediment? The "Not_found" column dominates the table (it's the largest count in every row), so it will drive the omnibus statistic and can mask differences among the three fractions.
+
+```{r}
+## Conditional analysis: restrict to detected proteins only
+tables_detected <- lapply(tables, function(m) m[, c("Initiation", "light", "heavy")])
+omnibus_detected <- lapply(tables_detected, chisq.test)
+sapply(omnibus_detected, function(x) x$p.value)
+lapply(omnibus_detected, function(x) round(x$stdres, 2))
+```
+
+# Calculating Z-score for each row
+And saving it in a new data frame
+This is not a sctrict zscore, is very loose among r values in a row
+
+```{r zscore, include=FALSE}
+# scale() works column-wise, so transpose in and out to z-score each row
+m <- as.matrix(new_data_frame_col1)
+new_data_score <- as.data.frame(t(scale(t(m))))
+
+# rows with zero variance give NaN, not an error — they will propagate silently
+sum(is.nan(as.matrix(new_data_score)))
+
+# each row should now have mean ~0 and sd 1
+summary(rowMeans(new_data_score, na.rm = TRUE))
+summary(apply(new_data_score, 1, sd, na.rm = TRUE))
+
+```
+
+Rename to matach new_data_frame_col1
+```{r rename}
+colnames(new_data_score) <- colnames(new_data_frame_col1) 
+rownames(new_data_score) <- rownames(new_data_frame_col1)
+
+```
+
+# Obtener candidatos
+Now I am filtering the factors that have a Zscore > +1 in the columns of the fractions of elongation and polysome
+ahora voy a filtrar solo aquellos factores que tengan un Zscore mayor a +1 en las columnas de las fracciones 6 a la 10 ( F06 a F10)
+y hare heatmap solo de esos
+
+```{r filter}
+new_data_score_fr610<-new_data_score[c("elongation", "polysome")]
+
+final_candidates <- data.frame(matrix(ncol=1, nrow= 400))
+
+for (i in 1:nrow(new_data_score_fr610)) {
+  for (j in 1:ncol(new_data_score_fr610)) {
+    if(new_data_score_fr610[i,j] > +1){
+      final_candidates[i,] <- rownames(new_data_score_fr610[i,0])
+    }
+  }
+}
+
+final_candidates_df <- na.omit(as.data.frame(final_candidates))
+rownames(final_candidates_df) <- final_candidates_df$matrix.ncol...1..nrow...400.
+#now i need to search for these factors in  the original table to plot the heatmap
+heatmap_final_candidates <-merge(data_polysome,final_candidates_df, by.x = "Gene.Symbol", by.y = "matrix.ncol...1..nrow...400.")
+heatmap_final_candidates_result <- heatmap_final_candidates %>%
+  arrange(Gene.Symbol, Ribosome_Detailed != "other") %>%   # "other" rows sort first
+  distinct(Gene.Symbol, .keep_all = TRUE)
+rownames(heatmap_final_candidates_result)<-heatmap_final_candidates_result$Gene.Symbol
+row.names(heatmap_final_candidates_result)<-heatmap_final_candidates_result$Gene.Symbol
+
+# choose the data you want for the heatmap, by column names
+heatmap_final_candidates_col<-heatmap_final_candidates_result[c("initation", "elongation", "polysome")]
+
+Ma_Nonmatrix2 <-data.matrix(heatmap_final_candidates_col)
+Non_htmp<-heatmap.2(Ma_Nonmatrix2, Rowv = TRUE, dendrogram ="none", Colv= NA, col=colorRampPalette(c ("white","pink","red")), scale="row", trace="none", density.info=c("none"), cexCol=0.8,cexRow = 0.6, main = "polysome profiling density of CRISPRi positive factors")
+```
+
+Now i have to save this list and I can move forward through the pipeline
+```{r saving}
+write.csv(final_candidates_df, "/n/projects/mb2365/R/others/polysome/output/Candidates_post_polysome_filter.csv", row.names=FALSE)
+
+write.csv(rownames(new_data_frame_col1), "/n/projects/mb2365/R/others/polysome/output/intersection_Candidates_pre_polysome_filter.csv", row.names=FALSE)
+
+
+```
+
